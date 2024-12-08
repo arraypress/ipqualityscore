@@ -321,8 +321,6 @@ class Client {
 	 *                                  Default empty array.
 	 *
 	 * @return IP|WP_Error IP response object on success, WP_Error on failure.
-	 * @since 1.0.0
-	 *
 	 */
 	public function check_ip( string $ip, array $additional_params = [] ) {
 		if ( ! filter_var( $ip, FILTER_VALIDATE_IP ) ) {
@@ -364,8 +362,6 @@ class Client {
 	 *                                  Default empty array.
 	 *
 	 * @return Email|WP_Error Email response object on success, WP_Error on failure.
-	 * @since 1.0.0
-	 *
 	 */
 	public function validate_email( string $email, array $additional_params = [] ) {
 		if ( ! filter_var( $email, FILTER_VALIDATE_EMAIL ) ) {
@@ -409,8 +405,6 @@ class Client {
 	 *                                  Default empty array.
 	 *
 	 * @return LeakCheck|WP_Error LeakCheck response object on success, WP_Error on failure.
-	 * @since 1.0.0
-	 *
 	 */
 	public function check_leaked_data( string $value, string $type = 'email', array $additional_params = [] ) {
 		$valid_types = [ 'email', 'password', 'username' ];
@@ -472,8 +466,6 @@ class Client {
 	 *                                  Default empty array.
 	 *
 	 * @return URL|WP_Error URL response object on success, WP_Error on failure.
-	 * @since 1.0.0
-	 *
 	 */
 	public function scan_url( string $url, array $additional_params = [] ) {
 		if ( ! filter_var( $url, FILTER_VALIDATE_URL ) ) {
@@ -519,8 +511,6 @@ class Client {
 	 *                                  Default empty array.
 	 *
 	 * @return Phone|WP_Error Phone response object on success, WP_Error on failure.
-	 * @since 1.0.0
-	 *
 	 */
 	public function validate_phone( string $phone, array $additional_params = [] ) {
 		if ( empty( $phone ) || strlen( $phone ) < 10 ) {
@@ -569,8 +559,6 @@ class Client {
 	 *                                - transaction_type: Type of transaction (purchase, deposit, etc)
 	 *
 	 * @return Transaction|WP_Error Transaction response object on success, WP_Error on failure.
-	 * @since 1.0.0
-	 *
 	 */
 	public function validate_transaction( array $transaction_data ) {
 		$required_fields = [ 'ip_address' ];
@@ -605,8 +593,6 @@ class Client {
 	 *                                 Default empty array.
 	 *
 	 * @return CreditUsage|WP_Error CreditUsage response object on success, WP_Error on failure.
-	 * @since 1.0.0
-	 *
 	 */
 	public function get_credit_usage( array $additional_params = [] ) {
 		$cache_key = $this->get_cache_key( 'credit_usage_' . md5( serialize( $additional_params ) ) );
@@ -645,7 +631,7 @@ class Client {
 		$valid_params = [ 'ip', 'email', 'request_id', 'phone' ];
 		$has_required = false;
 		foreach ( $valid_params as $param ) {
-			if ( isset( $data[ $param ] ) && ! empty( $data[ $param ] ) ) {
+			if ( ! empty( $data[ $param ] ) ) {
 				$has_required = true;
 				break;
 			}
@@ -675,7 +661,7 @@ class Client {
 
 		if ( isset( $data['phone'] ) ) {
 			// Phone requires country
-			if ( ! isset( $data['country'] ) || empty( $data['country'] ) ) {
+			if ( empty( $data['country'] ) ) {
 				return new WP_Error(
 					'missing_country',
 					__( 'Country is required when reporting a phone number', 'arraypress' )
