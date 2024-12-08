@@ -1,0 +1,51 @@
+{
+  "name": "arraypress/ipqualityscore",
+  "description": "A PHP library for integrating with the IPQualityScore API in WordPress, providing proxy, VPN & email validation, phone verification, dark web monitoring, URL scanning, and fraud prevention. Features comprehensive response handling and WordPress transient caching.",
+  "type": "library",
+  "license": "GPL-2.0-or-later",
+  "homepage": "https://github.com/arraypress/ipqualityscore/",
+  "authors": [
+    {
+      "name": "David Sherlock",
+      "homepage": "https://arraypress.com/"
+    }
+  ],
+  "require": {
+    "php": "^7.4 || ^8.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "ArrayPress\\IPQualityScore\\": "src/"
+    }
+  },
+  "config": {
+    "optimize-autoloader": true,
+    "sort-packages": true
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true,
+  "support": {
+    "issues": "https://github.com/arraypress/ipqualityscore/issues",
+    "source": "https://github.com/arraypress/ipqualityscore"
+  },
+  "keywords": [
+    "ipqualityscore",
+    "proxy-detection",
+    "vpn-detection",
+    "email-validation",
+    "phone-verification",
+    "dark-web-monitoring",
+    "url-scanning",
+    "fraud-prevention",
+    "wordpress",
+    "ip-lookup",
+    "asn",
+    "security",
+    "anti-fraud",
+    "threat-detection",
+    "email-verification",
+    "data-breach",
+    "leak-detection",
+    "transaction-scoring"
+  ]
+}
