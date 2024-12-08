@@ -488,7 +488,7 @@ class Client {
 			}
 		}
 
-		$response = $this->make_request( 'credits', $additional_params );
+		$response = $this->make_request( 'account', $additional_params );
 
 		if ( is_wp_error( $response ) ) {
 			return $response;
