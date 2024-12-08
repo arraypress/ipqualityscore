@@ -87,6 +87,71 @@ class Client {
 	];
 
 	/**
+	 * API Endpoint patterns and their configurations
+	 */
+	private const ENDPOINTS = [
+		// Simple GET endpoints with value after API key
+		'phone'            => [
+			'pattern'     => '%s%s/%s/%s', // base/endpoint/api_key/value
+			'method'      => 'GET',
+			'value_param' => 'phone'
+		],
+		'ip'               => [
+			'pattern'     => '%s%s/%s/%s', // base/endpoint/api_key/value
+			'method'      => 'GET',
+			'value_param' => 'ip'
+		],
+		'url'              => [
+			'pattern'      => '%s%s/%s/%s', // base/endpoint/api_key/value
+			'method'       => 'GET',
+			'value_param'  => 'url',
+			'encode_value' => true
+		],
+		// Special GET endpoints
+		'leaked'           => [
+			'pattern'      => '%s%s/%s/%s/%s', // base/endpoint/type/api_key/value
+			'method'       => 'GET',
+			'type_param'   => 'type',
+			'value_param'  => 'value',
+			'encode_value' => true
+		],
+		'account'          => [
+			'pattern' => '%s%s/%s', // base/endpoint/api_key
+			'method'  => 'GET'
+		],
+		// List endpoints (GET)
+		'allowlist/list'   => [
+			'pattern' => '%s%s/%s/list', // base/endpoint_base/api_key/list
+			'method'  => 'GET'
+		],
+		'blocklist/list'   => [
+			'pattern' => '%s%s/%s/list', // base/endpoint_base/api_key/list
+			'method'  => 'GET'
+		],
+		// POST endpoints
+		'allowlist/create' => [
+			'pattern' => '%s%s/%s', // base/endpoint/api_key
+			'method'  => 'POST'
+		],
+		'allowlist/delete' => [
+			'pattern' => '%s%s/%s', // base/endpoint/api_key
+			'method'  => 'POST'
+		],
+		'blocklist/create' => [
+			'pattern' => '%s%s/%s', // base/endpoint/api_key
+			'method'  => 'POST'
+		],
+		'blocklist/delete' => [
+			'pattern' => '%s%s/%s', // base/endpoint/api_key
+			'method'  => 'POST'
+		],
+		'transaction'      => [
+			'pattern' => '%s%s/%s', // base/endpoint/api_key
+			'method'  => 'POST'
+		]
+	];
+
+	/**
 	 * Initialize the IPQualityScore client
 	 *
 	 * @param string $api_key          API key for IPQualityScore
@@ -146,50 +211,35 @@ class Client {
 			'fast'                       => false,
 		], $params );
 
-		// Build URL based on endpoint type
-		switch ( $endpoint ) {
-			case 'phone':
-				$url = sprintf( '%sphone/%s/%s', self::API_BASE, $this->api_key, $params['phone'] );
-				unset( $params['phone'] ); // Remove from query params
-				$method = 'GET';
-				break;
+		// Get endpoint configuration
+		$config = self::ENDPOINTS[ $endpoint ] ?? [
+			'pattern' => '%s%s/%s',
+			'method'  => 'POST'
+		];
 
-			case 'ip':
-				$url = sprintf( '%sip/%s/%s', self::API_BASE, $this->api_key, $params['ip'] );
-				unset( $params['ip'] ); // Remove from query params
-				$method = 'GET';
-				break;
+		// Build URL based on endpoint configuration
+		$url_params = [ self::API_BASE, $endpoint, $this->api_key ];
 
-			case 'url':
-				$url = sprintf( '%surl/%s/%s', self::API_BASE, $this->api_key, urlencode( $params['url'] ) );
-				unset( $params['url'] ); // Remove from query params
-				$method = 'GET';
-				break;
-
-			case 'leaked':
-				$url = sprintf( '%sleaked/%s/%s/%s',
-					self::API_BASE,
-					$params['type'],
-					$this->api_key,
-					urlencode( $params['value'] )
-				);
-				unset( $params['type'], $params['value'] ); // Remove from query params
-				$method = 'GET';
-				break;
-
-			case 'account':
-				$url    = sprintf( '%saccount/%s', self::API_BASE, $this->api_key );
-				$method = 'GET';
-				break;
-
-			default:
-				$url    = sprintf( '%s%s/%s', self::API_BASE, $endpoint, $this->api_key );
-				$method = 'POST';
+		// Add type and value parameters for special endpoints
+		if ( isset( $config['type_param'] ) && isset( $params[ $config['type_param'] ] ) ) {
+			$url_params[] = $params[ $config['type_param'] ];
+			unset( $params[ $config['type_param'] ] );
 		}
 
+		if ( isset( $config['value_param'] ) && isset( $params[ $config['value_param'] ] ) ) {
+			$value = $params[ $config['value_param'] ];
+			if ( ! empty( $config['encode_value'] ) ) {
+				$value = urlencode( $value );
+			}
+			$url_params[] = $value;
+			unset( $params[ $config['value_param'] ] );
+		}
+
+		$url = sprintf( $config['pattern'], ...$url_params );
+
 		// Add remaining parameters as query string for GET requests
-		if ( $method === 'GET' && ! empty( $params ) ) {
-			$url .= '?' . http_build_query( $params );
+		if ( $config['method'] === 'GET' && ! empty( $params ) ) {
+			$url .= ( strpos( $url, '?' ) === false ? '?' : '&' ) . http_build_query( $params );
 		}
 
 		$default_args = [
@@ -200,14 +250,14 @@ class Client {
 		];
 
 		// Add body parameters for POST requests
-		if ( $method === 'POST' ) {
+		if ( $config['method'] === 'POST' ) {
 			$default_args['body'] = $params;
 		}
 
 		$args = wp_parse_args( $args, $default_args );
 
 		// Make the request using appropriate method
-		$response = $method === 'POST' ?
+		$response = $config['method'] === 'POST' ?
 			wp_remote_post( $url, $args ) :
 			wp_remote_get( $url, $args );
 
