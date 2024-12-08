@@ -8,13 +8,13 @@ use ArrayPress\IPQualityScore\Response\IP;
 use ArrayPress\IPQualityScore\Response\Email;
 use ArrayPress\IPQualityScore\Response\RequestList;
 use ArrayPress\IPQualityScore\Response\Transaction;
-use Arraypress\IPQualityScore\Response\Phone;
-use Arraypress\IPQualityScore\Response\URL;
-use Arraypress\IPQualityScore\Response\LeakCheck;
-use Arraypress\IPQualityScore\Response\CreditUsage;
-use Arraypress\IPQualityScore\Response\EntryList;
-use Arraypress\IPQualityScore\Response\CountryList;
-use Arraypress\IPQualityScore\Response\FraudReport;
+use ArrayPress\IPQualityScore\Response\Phone;
+use ArrayPress\IPQualityScore\Response\URL;
+use ArrayPress\IPQualityScore\Response\LeakCheck;
+use ArrayPress\IPQualityScore\Response\CreditUsage;
+use ArrayPress\IPQualityScore\Response\EntryList;
+use ArrayPress\IPQualityScore\Response\CountryList;
+use ArrayPress\IPQualityScore\Response\FraudReport;
 use WP_Error;
 
 /**
@@ -146,21 +146,70 @@ class Client {
 			'fast'                       => false,
 		], $params );
 
-		$url = self::API_BASE . $endpoint . '/' . $this->api_key;
-		if ( strpos( $endpoint, 'ip' ) === 0 ) {
-			$url .= '/' . $params['ip'];
+		// Build URL based on endpoint type
+		switch ( $endpoint ) {
+			case 'phone':
+				$url = sprintf( '%sphone/%s/%s', self::API_BASE, $this->api_key, $params['phone'] );
+				unset( $params['phone'] ); // Remove from query params
+				$method = 'GET';
+				break;
+
+			case 'ip':
+				$url = sprintf( '%sip/%s/%s', self::API_BASE, $this->api_key, $params['ip'] );
+				unset( $params['ip'] ); // Remove from query params
+				$method = 'GET';
+				break;
+
+			case 'url':
+				$url = sprintf( '%surl/%s/%s', self::API_BASE, $this->api_key, urlencode( $params['url'] ) );
+				unset( $params['url'] ); // Remove from query params
+				$method = 'GET';
+				break;
+
+			case 'leaked':
+				$url = sprintf( '%sleaked/%s/%s/%s',
+					self::API_BASE,
+					$params['type'],
+					$this->api_key,
+					urlencode( $params['value'] )
+				);
+				unset( $params['type'], $params['value'] ); // Remove from query params
+				$method = 'GET';
+				break;
+
+			case 'account':
+				$url    = sprintf( '%saccount/%s', self::API_BASE, $this->api_key );
+				$method = 'GET';
+				break;
+
+			default:
+				$url    = sprintf( '%s%s/%s', self::API_BASE, $endpoint, $this->api_key );
+				$method = 'POST';
+		}
+
+		// Add remaining parameters as query string for GET requests
+		if ( $method === 'GET' && ! empty( $params ) ) {
+			$url .= '?' . http_build_query( $params );
 		}
 
 		$default_args = [
 			'headers' => [
 				'Accept' => 'application/json',
 			],
-			'body'    => $params,
 			'timeout' => 15,
 		];
 
-		$args     = wp_parse_args( $args, $default_args );
-		$response = wp_remote_post( $url, $args );
+		// Add body parameters for POST requests
+		if ( $method === 'POST' ) {
+			$default_args['body'] = $params;
+		}
+
+		$args = wp_parse_args( $args, $default_args );
+
+		// Make the request using appropriate method
+		$response = $method === 'POST' ?
+			wp_remote_post( $url, $args ) :
+			wp_remote_get( $url, $args );
 
 		return $this->handle_response( $response );
 	}
@@ -215,12 +264,15 @@ class Client {
 	}
 
 	/**
-	 * Check IP reputation
+	 * Check IP reputation against the IPQualityScore API
 	 *
-	 * @param string $ip                IP address to check
-	 * @param array  $additional_params Additional parameters
+	 * @param string $ip                IP address to check.
+	 * @param array  $additional_params Optional. Additional parameters for the API request.
+	 *                                  Default empty array.
 	 *
-	 * @return IP|WP_Error
+	 * @return IP|WP_Error IP response object on success, WP_Error on failure.
+	 * @since 1.0.0
+	 *
 	 */
 	public function check_ip( string $ip, array $additional_params = [] ) {
 		if ( ! filter_var( $ip, FILTER_VALIDATE_IP ) ) {
@@ -239,8 +291,7 @@ class Client {
 			}
 		}
 
-		$params   = array_merge( [ 'ip' => $ip ], $additional_params );
-		$response = $this->make_request( 'ip', $params );
+		$response = $this->make_request( 'ip', [ 'ip' => $ip ] + $additional_params );
 
 		if ( is_wp_error( $response ) ) {
 			return $response;
@@ -254,12 +305,17 @@ class Client {
 	}
 
 	/**
-	 * Validate email address
+	 * Validate email address using the IPQualityScore API.
 	 *
-	 * @param string $email             Email to validate
-	 * @param array  $additional_params Additional parameters
+	 * Checks email validity, deliverability, and potential fraud indicators.
 	 *
-	 * @return Email|WP_Error
+	 * @param string $email             Email address to validate.
+	 * @param array  $additional_params Optional. Additional parameters for the API request.
+	 *                                  Default empty array.
+	 *
+	 * @return Email|WP_Error Email response object on success, WP_Error on failure.
+	 * @since 1.0.0
+	 *
 	 */
 	public function validate_email( string $email, array $additional_params = [] ) {
 		if ( ! filter_var( $email, FILTER_VALIDATE_EMAIL ) ) {
@@ -278,8 +334,7 @@ class Client {
 			}
 		}
 
-		$params   = array_merge( [ 'email' => $email ], $additional_params );
-		$response = $this->make_request( 'email', $params );
+		$response = $this->make_request( 'email', [ 'email' => $email ] + $additional_params );
 
 		if ( is_wp_error( $response ) ) {
 			return $response;
@@ -293,13 +348,19 @@ class Client {
 	}
 
 	/**
-	 * Check for leaked data in dark web breaches
+	 * Check for leaked data in dark web breaches.
 	 *
-	 * @param string $value             Value to check (email, password, or username)
-	 * @param string $type              Type of check ('email', 'password', 'username')
-	 * @param array  $additional_params Additional parameters
+	 * Searches for compromised data across email addresses, usernames, and passwords.
 	 *
-	 * @return LeakCheck|WP_Error
+	 * @param string $value             Value to check (email, password, or username).
+	 * @param string $type              Optional. Type of check ('email', 'password', 'username').
+	 *                                  Default 'email'.
+	 * @param array  $additional_params Optional. Additional parameters for the API request.
+	 *                                  Default empty array.
+	 *
+	 * @return LeakCheck|WP_Error LeakCheck response object on success, WP_Error on failure.
+	 * @since 1.0.0
+	 *
 	 */
 	public function check_leaked_data( string $value, string $type = 'email', array $additional_params = [] ) {
 		$valid_types = [ 'email', 'password', 'username' ];
@@ -319,14 +380,9 @@ class Client {
 				}
 				break;
 			case 'password':
-				// Password can be plain text or hashed with MD5, SHA1, or SHA256
-				if ( empty( $value ) ) {
-					return new WP_Error( 'invalid_password', __( 'Password cannot be empty', 'arraypress' ) );
-				}
-				break;
 			case 'username':
 				if ( empty( $value ) ) {
-					return new WP_Error( 'invalid_username', __( 'Username cannot be empty', 'arraypress' ) );
+					return new WP_Error( "invalid_{$type}", __( "{$type} cannot be empty", 'arraypress' ) );
 				}
 				break;
 		}
@@ -340,13 +396,10 @@ class Client {
 			}
 		}
 
-		// Make API request to check for leaked data
-		$params = array_merge( [
-			'type'  => $type,
-			'value' => $value
-		], $additional_params );
-
-		$response = $this->make_request( 'leak/check', $params );
+		$response = $this->make_request( 'leaked', [
+			                                           'type'  => $type,
+			                                           'value' => $value
+		                                           ] + $additional_params );
 
 		if ( is_wp_error( $response ) ) {
 			return $response;
@@ -360,12 +413,17 @@ class Client {
 	}
 
 	/**
-	 * Scan URL for malicious content
+	 * Scan URL for malicious content using the IPQualityScore API.
 	 *
-	 * @param string $url               URL to scan
-	 * @param array  $additional_params Additional parameters
+	 * Analyzes URLs for phishing, malware, and other security threats.
 	 *
-	 * @return URL|WP_Error
+	 * @param string $url               URL to scan for malicious content.
+	 * @param array  $additional_params Optional. Additional parameters for the API request.
+	 *                                  Default empty array.
+	 *
+	 * @return URL|WP_Error URL response object on success, WP_Error on failure.
+	 * @since 1.0.0
+	 *
 	 */
 	public function scan_url( string $url, array $additional_params = [] ) {
 		if ( ! filter_var( $url, FILTER_VALIDATE_URL ) ) {
@@ -384,8 +442,7 @@ class Client {
 			}
 		}
 
-		$params   = array_merge( [ 'url' => $url ], $additional_params );
-		$response = $this->make_request( 'url/scan', $params );
+		$response = $this->make_request( 'url', [ 'url' => $url ] + $additional_params );
 
 		if ( is_wp_error( $response ) ) {
 			return $response;
@@ -399,17 +456,23 @@ class Client {
 	}
 
 	/**
-	 * Validate phone number
+	 * Validate phone number using the IPQualityScore API.
 	 *
-	 * @param string $phone             Phone number to validate
-	 * @param array  $additional_params Additional parameters
+	 * Validates phone numbers and provides detailed information about their status,
+	 * carrier, location, and potential fraud indicators.
+	 *
+	 * @param string $phone             Phone number to validate.
+	 * @param array  $additional_params Optional. Additional parameters for the API request.
+	 *                                  Supported parameters include:
 	 *                                  - country[] : Array of preferred countries (e.g., ['US', 'UK', 'CA'])
 	 *                                  - strictness : Verification strictness level (0-1)
+	 *                                  Default empty array.
 	 *
-	 * @return Phone|WP_Error
+	 * @return Phone|WP_Error Phone response object on success, WP_Error on failure.
+	 * @since 1.0.0
+	 *
 	 */
 	public function validate_phone( string $phone, array $additional_params = [] ) {
-		// Basic phone number format validation
 		if ( empty( $phone ) || strlen( $phone ) < 10 ) {
 			return new WP_Error(
 				'invalid_phone',
@@ -429,7 +492,6 @@ class Client {
 			}
 		}
 
-		// Make API request to validate phone
 		$response = $this->make_request( 'phone', [ 'phone' => $phone ] + $additional_params );
 
 		if ( is_wp_error( $response ) ) {
@@ -444,11 +506,21 @@ class Client {
 	}
 
 	/**
-	 * Validate a transaction
+	 * Validate a transaction against the IPQualityScore API.
 	 *
-	 * @param array $transaction_data Transaction details
+	 * Analyzes transaction details for potential fraud indicators and risk assessment.
 	 *
-	 * @return Transaction|WP_Error
+	 * @param array $transaction_data Transaction details to validate. Required fields:
+	 *                                - ip_address: IP address of the transaction (required)
+	 *                                - user_email: Email address of the user
+	 *                                - user_phone: Phone number of the user
+	 *                                - transaction_amount: Amount of the transaction
+	 *                                - currency: Currency code (e.g., USD)
+	 *                                - transaction_type: Type of transaction (purchase, deposit, etc)
+	 *
+	 * @return Transaction|WP_Error Transaction response object on success, WP_Error on failure.
+	 * @since 1.0.0
+	 *
 	 */
 	public function validate_transaction( array $transaction_data ) {
 		$required_fields = [ 'ip_address' ];
@@ -470,13 +542,21 @@ class Client {
 		return new Transaction( $response );
 	}
 
-
 	/**
-	 * Get credit usage information
+	 * Get credit usage information from IPQualityScore API.
 	 *
-	 * @param array $additional_params Additional parameters
+	 * Retrieves detailed information about API credit usage including:
+	 * - Total available credits
+	 * - Current usage
+	 * - Usage by service (proxy, email, phone, URL)
+	 * - Remaining credits
 	 *
-	 * @return CreditUsage|WP_Error
+	 * @param array $additional_params Optional. Additional parameters for the API request.
+	 *                                 Default empty array.
+	 *
+	 * @return CreditUsage|WP_Error CreditUsage response object on success, WP_Error on failure.
+	 * @since 1.0.0
+	 *
 	 */
 	public function get_credit_usage( array $additional_params = [] ) {
 		$cache_key = $this->get_cache_key( 'credit_usage_' . md5( serialize( $additional_params ) ) );
@@ -707,7 +787,6 @@ class Client {
 
 		return new RequestList( $response );
 	}
-
 
 	/**
 	 * Get list of countries and their codes
