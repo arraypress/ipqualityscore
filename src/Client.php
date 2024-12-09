@@ -126,15 +126,16 @@ class Client {
 		],
 
 		// List endpoints (GET)
-		'requests' => [
-			'pattern' => '%s%s/%s/list', // base/endpoint/api_key/list
-			'method'  => 'GET'
+		'requests'         => [
+			'pattern'            => '%s%s/%s/list', // base/endpoint/api_key/list
+			'method'             => 'GET',
+			'skip_common_params' => true  // New flag to skip adding common parameters
 		],
-		'allowlist/list' => [
+		'allowlist/list'   => [
 			'pattern' => '%s%s/%s', // base/endpoint/api_key
 			'method'  => 'GET'
 		],
-		'blocklist/list' => [
+		'blocklist/list'   => [
 			'pattern' => '%s%s/%s', // base/endpoint/api_key
 			'method'  => 'GET'
 		],
@@ -224,21 +225,23 @@ class Client {
 	 * @return array|WP_Error Response array or WP_Error on failure
 	 */
 	private function make_request( string $endpoint, array $params = [], array $args = [] ) {
-		// Add common parameters
-		$params = array_merge( [
-			'strictness'                 => $this->strictness,
-			'user_agent'                 => $_SERVER['HTTP_USER_AGENT'] ?? '',
-			'user_language'              => $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '',
-			'allow_public_access_points' => $this->allow_public_access_points,
-			'lighter_penalties'          => $this->lighter_penalties,
-			'fast'                       => false,
-		], $params );
-
 		// Get endpoint configuration
 		$config = self::ENDPOINTS[ $endpoint ] ?? [
 			'pattern' => '%s%s/%s',
 			'method'  => 'POST'
 		];
+
+		// Only add common parameters if not skipped for this endpoint
+		if ( empty( $config['skip_common_params'] ) ) {
+			$params = array_merge( [
+				'strictness'                 => $this->strictness,
+				'user_agent'                 => $_SERVER['HTTP_USER_AGENT'] ?? '',
+				'user_language'              => $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '',
+				'allow_public_access_points' => $this->allow_public_access_points,
+				'lighter_penalties'          => $this->lighter_penalties,
+				'fast'                       => false,
+			], $params );
+		}
 
 		// Build URL based on endpoint configuration
 		$url_params = [ self::API_BASE, $endpoint, $this->api_key ];
@@ -944,6 +947,16 @@ class Client {
 			);
 		}
 
+		// Set default date range if not provided
+		if ( ! isset( $additional_params['start_date'] ) ) {
+			// Default to 30 days ago
+			$additional_params['start_date'] = date( 'Y-m-d', strtotime( '-30 days' ) );
+		}
+
+		if ( ! isset( $additional_params['stop_date'] ) ) {
+			$additional_params['stop_date'] = date( 'Y-m-d' );
+		}
+
 		// Validate dates if provided
 		foreach ( [ 'start_date', 'stop_date' ] as $date_field ) {
 			if ( isset( $additional_params[ $date_field ] ) ) {
@@ -970,8 +983,7 @@ class Client {
 
 		$params = array_merge( [ 'type' => $type ], $additional_params );
 
-		$cache_key = $this->get_cache_key( 'request_list_' .
-		                                   $type . '_' . md5( serialize( $additional_params ) ) );
+		$cache_key = $this->get_cache_key( 'request_list_' . $type . '_' . md5( serialize( $additional_params ) ) );
 
 		if ( $this->enable_cache ) {
 			$cached_data = get_transient( $cache_key );
