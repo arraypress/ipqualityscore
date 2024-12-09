@@ -980,7 +980,7 @@ class Client {
 			}
 		}
 
-		$response = $this->make_request( 'requests/list', $params );
+		$response = $this->make_request( 'requests', $params );
 
 		if ( is_wp_error( $response ) ) {
 			return $response;
