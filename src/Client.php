@@ -126,12 +126,16 @@ class Client {
 		],
 
 		// List endpoints (GET)
-		'allowlist/list'   => [
-			'pattern' => '%s%s/%s/list', // base/endpoint_base/api_key/list
+		'requests' => [
+			'pattern' => '%s%s/%s/list', // base/endpoint/api_key/list
 			'method'  => 'GET'
 		],
-		'blocklist/list'   => [
-			'pattern' => '%s%s/%s/list', // base/endpoint_base/api_key/list
+		'allowlist/list' => [
+			'pattern' => '%s%s/%s', // base/endpoint/api_key
+			'method'  => 'GET'
+		],
+		'blocklist/list' => [
+			'pattern' => '%s%s/%s', // base/endpoint/api_key
 			'method'  => 'GET'
 		],
 
