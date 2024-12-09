@@ -6,6 +6,7 @@ namespace ArrayPress\IPQualityScore;
 
 use ArrayPress\IPQualityScore\Response\IP;
 use ArrayPress\IPQualityScore\Response\Email;
+use ArrayPress\IPQualityScore\Response\MalwareCheck;
 use ArrayPress\IPQualityScore\Response\RequestList;
 use ArrayPress\IPQualityScore\Response\Transaction;
 use ArrayPress\IPQualityScore\Response\Phone;
@@ -15,6 +16,8 @@ use ArrayPress\IPQualityScore\Response\CreditUsage;
 use ArrayPress\IPQualityScore\Response\EntryList;
 use ArrayPress\IPQualityScore\Response\CountryList;
 use ArrayPress\IPQualityScore\Response\FraudReport;
+use CURLFile;
+use DateTime;
 use WP_Error;
 
 /**
@@ -76,7 +79,7 @@ class Client {
 	/**
 	 * Valid types and their corresponding value_types
 	 */
-	private const ALLOWLIST_TYPES = [
+	private const ENTRYLIST_TYPES = [
 		'proxy'         => [ 'ip', 'cidr', 'isp' ],
 		'devicetracker' => [ 'deviceid', 'ip', 'cidr', 'isp' ],
 		'mobiletracker' => [ 'deviceid', 'ip', 'cidr', 'isp' ],
@@ -90,6 +93,7 @@ class Client {
 	 * API Endpoint patterns and their configurations
 	 */
 	private const ENDPOINTS = [
+
 		// Simple GET endpoints with value after API key
 		'phone'            => [
 			'pattern'     => '%s%s/%s/%s', // base/endpoint/api_key/value
@@ -107,6 +111,7 @@ class Client {
 			'value_param'  => 'url',
 			'encode_value' => true
 		],
+
 		// Special GET endpoints
 		'leaked'           => [
 			'pattern'      => '%s%s/%s/%s/%s', // base/endpoint/type/api_key/value
@@ -119,6 +124,7 @@ class Client {
 			'pattern' => '%s%s/%s', // base/endpoint/api_key
 			'method'  => 'GET'
 		],
+
 		// List endpoints (GET)
 		'allowlist/list'   => [
 			'pattern' => '%s%s/%s/list', // base/endpoint_base/api_key/list
@@ -128,6 +134,7 @@ class Client {
 			'pattern' => '%s%s/%s/list', // base/endpoint_base/api_key/list
 			'method'  => 'GET'
 		],
+
 		// POST endpoints
 		'allowlist/create' => [
 			'pattern' => '%s%s/%s', // base/endpoint/api_key
@@ -146,6 +153,16 @@ class Client {
 			'method'  => 'POST'
 		],
 		'transaction'      => [
+			'pattern' => '%s%s/%s', // base/endpoint/api_key
+			'method'  => 'POST'
+		],
+
+		'malware/scan'   => [
+			'pattern'   => '%s%s/%s', // base/endpoint/api_key
+			'method'    => 'POST',
+			'multipart' => true
+		],
+		'malware/lookup' => [
 			'pattern' => '%s%s/%s', // base/endpoint/api_key
 			'method'  => 'POST'
 		]
@@ -190,6 +207,8 @@ class Client {
 	public function set_lighter_penalties( bool $use_lighter ): void {
 		$this->lighter_penalties = $use_lighter;
 	}
+
+	/** Request/Response ********************************************************/
 
 	/**
 	 * Make a request to the IPQualityScore API
@@ -249,8 +268,14 @@ class Client {
 			'timeout' => 15,
 		];
 
-		// Add body parameters for POST requests
-		if ( $config['method'] === 'POST' ) {
+		// Handle multipart/form-data requests for file uploads
+		if ( isset( $config['multipart'] ) && $config['multipart'] ) {
+			if ( isset( $params['file'] ) && $params['file'] instanceof \CURLFile ) {
+				$default_args['headers']['Content-Type'] = 'multipart/form-data';
+				$default_args['body']                    = $params;
+			}
+		} elseif ( $config['method'] === 'POST' ) {
+			// For regular POST requests, merge params into body
 			$default_args['body'] = $params;
 		}
 
@@ -312,6 +337,8 @@ class Client {
 
 		return $data;
 	}
+
+	/** Basic/Core Checks ********************************************************/
 
 	/**
 	 * Check IP reputation against the IPQualityScore API
@@ -394,6 +421,54 @@ class Client {
 	}
 
 	/**
+	 * Validate phone number using the IPQualityScore API.
+	 *
+	 * Validates phone numbers and provides detailed information about their status,
+	 * carrier, location, and potential fraud indicators.
+	 *
+	 * @param string $phone             Phone number to validate.
+	 * @param array  $additional_params Optional. Additional parameters for the API request.
+	 *                                  Supported parameters include:
+	 *                                  - country[] : Array of preferred countries (e.g., ['US', 'UK', 'CA'])
+	 *                                  - strictness : Verification strictness level (0-1)
+	 *                                  Default empty array.
+	 *
+	 * @return Phone|WP_Error Phone response object on success, WP_Error on failure.
+	 */
+	public function validate_phone( string $phone, array $additional_params = [] ) {
+		if ( empty( $phone ) || strlen( $phone ) < 10 ) {
+			return new WP_Error(
+				'invalid_phone',
+				__( 'Phone number must be at least 10 digits long', 'arraypress' )
+			);
+		}
+
+		// Remove common phone number formatting
+		$phone = preg_replace( '/[^0-9]/', '', $phone );
+
+		$cache_key = $this->get_cache_key( 'phone_' . $phone . md5( serialize( $additional_params ) ) );
+
+		if ( $this->enable_cache ) {
+			$cached_data = get_transient( $cache_key );
+			if ( false !== $cached_data ) {
+				return new Phone( $cached_data );
+			}
+		}
+
+		$response = $this->make_request( 'phone', [ 'phone' => $phone ] + $additional_params );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		if ( $this->enable_cache ) {
+			set_transient( $cache_key, $response, $this->cache_expiration );
+		}
+
+		return new Phone( $response );
+	}
+
+	/**
 	 * Check for leaked data in dark web breaches.
 	 *
 	 * Searches for compromised data across email addresses, usernames, and passwords.
@@ -456,6 +531,8 @@ class Client {
 		return new LeakCheck( $response );
 	}
 
+	/** Malware Checks ********************************************************/
+
 	/**
 	 * Scan URL for malicious content using the IPQualityScore API.
 	 *
@@ -498,41 +575,43 @@ class Client {
 	}
 
 	/**
-	 * Validate phone number using the IPQualityScore API.
+	 * Scan a file for malware using the IPQualityScore Malware Scanner API
 	 *
-	 * Validates phone numbers and provides detailed information about their status,
-	 * carrier, location, and potential fraud indicators.
+	 * @param string $file_path         Path to the file to scan
+	 * @param array  $additional_params Optional additional parameters
 	 *
-	 * @param string $phone             Phone number to validate.
-	 * @param array  $additional_params Optional. Additional parameters for the API request.
-	 *                                  Supported parameters include:
-	 *                                  - country[] : Array of preferred countries (e.g., ['US', 'UK', 'CA'])
-	 *                                  - strictness : Verification strictness level (0-1)
-	 *                                  Default empty array.
-	 *
-	 * @return Phone|WP_Error Phone response object on success, WP_Error on failure.
+	 * @return MalwareCheck|WP_Error Malware response object on success, WP_Error on failure
 	 */
-	public function validate_phone( string $phone, array $additional_params = [] ) {
-		if ( empty( $phone ) || strlen( $phone ) < 10 ) {
+	public function scan_file_for_malware( string $file_path, array $additional_params = [] ) {
+		if ( ! file_exists( $file_path ) || ! is_readable( $file_path ) ) {
 			return new WP_Error(
-				'invalid_phone',
-				__( 'Phone number must be at least 10 digits long', 'arraypress' )
+				'invalid_file',
+				sprintf( __( 'File not found or not readable: %s', 'arraypress' ), $file_path )
 			);
 		}
 
-		// Remove common phone number formatting
-		$phone = preg_replace( '/[^0-9]/', '', $phone );
+		// Check file size (API limit is 100MB)
+		$file_size = filesize( $file_path );
+		if ( $file_size > 104857600 ) { // 100MB in bytes
+			return new WP_Error(
+				'file_too_large',
+				__( 'File size exceeds 100MB limit', 'arraypress' )
+			);
+		}
 
-		$cache_key = $this->get_cache_key( 'phone_' . $phone . md5( serialize( $additional_params ) ) );
+		$cache_key = $this->get_cache_key( 'malware_file_' . md5_file( $file_path ) . md5( serialize( $additional_params ) ) );
 
 		if ( $this->enable_cache ) {
 			$cached_data = get_transient( $cache_key );
 			if ( false !== $cached_data ) {
-				return new Phone( $cached_data );
+				return new MalwareCheck( $cached_data );
 			}
 		}
 
-		$response = $this->make_request( 'phone', [ 'phone' => $phone ] + $additional_params );
+		$params         = $additional_params;
+		$params['file'] = new CURLFile( $file_path );
+
+		$response = $this->make_request( 'malware/scan', $params );
 
 		if ( is_wp_error( $response ) ) {
 			return $response;
@@ -542,8 +621,90 @@ class Client {
 			set_transient( $cache_key, $response, $this->cache_expiration );
 		}
 
-		return new Phone( $response );
+		return new MalwareCheck( $response );
 	}
+
+	/**
+	 * Check if a file hash exists in the malware database
+	 *
+	 * @param string $file_hash         SHA256 hash of the file
+	 * @param array  $additional_params Optional additional parameters
+	 *
+	 * @return MalwareCheck|WP_Error Malware response object on success, WP_Error on failure
+	 */
+	public function lookup_malware_hash( string $file_hash, array $additional_params = [] ) {
+		if ( ! preg_match( '/^[a-fA-F0-9]{64}$/', $file_hash ) ) {
+			return new WP_Error(
+				'invalid_hash',
+				__( 'Invalid SHA256 hash format', 'arraypress' )
+			);
+		}
+
+		$cache_key = $this->get_cache_key( 'malware_hash_' . $file_hash . md5( serialize( $additional_params ) ) );
+
+		if ( $this->enable_cache ) {
+			$cached_data = get_transient( $cache_key );
+			if ( false !== $cached_data ) {
+				return new MalwareCheck( $cached_data );
+			}
+		}
+
+		$params = array_merge( [ 'hash' => $file_hash ], $additional_params );
+
+		$response = $this->make_request( 'malware/lookup', $params );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		if ( $this->enable_cache ) {
+			set_transient( $cache_key, $response, $this->cache_expiration );
+		}
+
+		return new MalwareCheck( $response );
+	}
+
+	/**
+	 * Scan a remote file for malware using its URL
+	 *
+	 * @param string $url               URL of the file to scan
+	 * @param array  $additional_params Optional additional parameters
+	 *
+	 * @return MalwareCheck|WP_Error Malware response object on success, WP_Error on failure
+	 */
+	public function scan_remote_file( string $url, array $additional_params = [] ) {
+		if ( ! filter_var( $url, FILTER_VALIDATE_URL ) ) {
+			return new WP_Error(
+				'invalid_url',
+				sprintf( __( 'Invalid URL format: %s', 'arraypress' ), $url )
+			);
+		}
+
+		$cache_key = $this->get_cache_key( 'malware_url_' . md5( $url ) . md5( serialize( $additional_params ) ) );
+
+		if ( $this->enable_cache ) {
+			$cached_data = get_transient( $cache_key );
+			if ( false !== $cached_data ) {
+				return new MalwareCheck( $cached_data );
+			}
+		}
+
+		$params = array_merge( [ 'url' => $url ], $additional_params );
+
+		$response = $this->make_request( 'malware/scan', $params );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		if ( $this->enable_cache ) {
+			set_transient( $cache_key, $response, $this->cache_expiration );
+		}
+
+		return new MalwareCheck( $response );
+	}
+
+	/** Validate Transaction **************************************************/
 
 	/**
 	 * Validate a transaction against the IPQualityScore API.
@@ -579,6 +740,8 @@ class Client {
 
 		return new Transaction( $response );
 	}
+
+	/** Credit Usage **********************************************************/
 
 	/**
 	 * Get credit usage information from IPQualityScore API.
@@ -617,6 +780,8 @@ class Client {
 
 		return new CreditUsage( $response );
 	}
+
+	/** Report Fraud **********************************************************/
 
 	/**
 	 * Report fraudulent activity
@@ -747,6 +912,7 @@ class Client {
 		return $this->report_fraud( [ 'request_id' => $request_id ], $additional_params );
 	}
 
+	/** Request List **********************************************************/
 
 	/**
 	 * Get list of previous API requests
@@ -777,7 +943,7 @@ class Client {
 		// Validate dates if provided
 		foreach ( [ 'start_date', 'stop_date' ] as $date_field ) {
 			if ( isset( $additional_params[ $date_field ] ) ) {
-				$date = \DateTime::createFromFormat( 'Y-m-d', $additional_params[ $date_field ] );
+				$date = DateTime::createFromFormat( 'Y-m-d', $additional_params[ $date_field ] );
 				if ( ! $date || $date->format( 'Y-m-d' ) !== $additional_params[ $date_field ] ) {
 					return new WP_Error(
 						'invalid_date',
@@ -823,6 +989,8 @@ class Client {
 
 		return new RequestList( $response );
 	}
+
+	/** Country List **********************************************************/
 
 	/**
 	 * Get list of countries and their codes
@@ -906,6 +1074,22 @@ class Client {
 		return new CountryList( $data );
 	}
 
+	/** Allowlist Entries *****************************************************/
+
+	/**
+	 * Get list of allowlist entries
+	 *
+	 * @return EntryList|WP_Error
+	 */
+	public function get_allowlist_entries() {
+		$response = $this->make_request( 'allowlist/list' );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		return new EntryList( $response );
+	}
 
 	/**
 	 * Create an allowlist entry
@@ -917,37 +1101,14 @@ class Client {
 	 *
 	 * @return EntryList|WP_Error
 	 */
-	public function create_allowlist_entry(
-		string $value,
-		string $type,
-		string $value_type,
-		?string $reason = null
-	) {
-		// Validate type
-		if ( ! isset( self::ALLOWLIST_TYPES[ $type ] ) ) {
-			return new WP_Error(
-				'invalid_type',
-				sprintf(
-					__( 'Invalid allowlist type. Must be one of: %s', 'arraypress' ),
-					implode( ', ', array_keys( self::ALLOWLIST_TYPES ) )
-				)
-			);
-		}
-
-		// Validate value_type
-		if ( $type !== 'custom' && ! in_array( $value_type, self::ALLOWLIST_TYPES[ $type ] ) ) {
-			return new WP_Error(
-				'invalid_value_type',
-				sprintf(
-					__( 'Invalid value type for %s. Must be one of: %s', 'arraypress' ),
-					$type,
-					implode( ', ', self::ALLOWLIST_TYPES[ $type ] )
-				)
-			);
+	public function create_allowlist_entry( string $value, string $type, string $value_type, ?string $reason = null ) {
+		$validation = $this->validate_list_params( $type, $value_type, 'allowlist' );
+		if ( is_wp_error( $validation ) ) {
+			return $validation;
 		}
 
 		// Validate value format based on value_type
-		if ( ! $this->validate_allowlist_value( $value, $value_type ) ) {
+		if ( ! $this->validate_list_value( $value, $value_type ) ) {
 			return new WP_Error(
 				'invalid_value',
 				sprintf( __( 'Invalid format for value type: %s', 'arraypress' ), $value_type )
@@ -974,21 +1135,6 @@ class Client {
 	}
 
 	/**
-	 * Get list of allowlist entries
-	 *
-	 * @return EntryList|WP_Error
-	 */
-	public function get_allowlist_entries() {
-		$response = $this->make_request( 'allowlist/list' );
-
-		if ( is_wp_error( $response ) ) {
-			return $response;
-		}
-
-		return new EntryList( $response );
-	}
-
-	/**
 	 * Delete an allowlist entry
 	 *
 	 * @param string $value      Value to remove
@@ -997,31 +1143,10 @@ class Client {
 	 *
 	 * @return EntryList|WP_Error
 	 */
-	public function delete_allowlist_entry(
-		string $value,
-		string $type,
-		string $value_type
-	) {
-		// Validate type and value_type same as create
-		if ( ! isset( self::ALLOWLIST_TYPES[ $type ] ) ) {
-			return new WP_Error(
-				'invalid_type',
-				sprintf(
-					__( 'Invalid allowlist type. Must be one of: %s', 'arraypress' ),
-					implode( ', ', array_keys( self::ALLOWLIST_TYPES ) )
-				)
-			);
-		}
-
-		if ( $type !== 'custom' && ! in_array( $value_type, self::ALLOWLIST_TYPES[ $type ] ) ) {
-			return new WP_Error(
-				'invalid_value_type',
-				sprintf(
-					__( 'Invalid value type for %s. Must be one of: %s', 'arraypress' ),
-					$type,
-					implode( ', ', self::ALLOWLIST_TYPES[ $type ] )
-				)
-			);
+	public function delete_allowlist_entry( string $value, string $type, string $value_type ) {
+		$validation = $this->validate_list_params( $type, $value_type, 'allowlist' );
+		if ( is_wp_error( $validation ) ) {
+			return $validation;
 		}
 
 		$params = [
@@ -1039,15 +1164,107 @@ class Client {
 		return new EntryList( $response );
 	}
 
+	/** Blocklist Entries *****************************************************/
+
 	/**
-	 * Validate allowlist value format
+	 * Get list of blocklist entries
+	 *
+	 * @return EntryList|WP_Error
+	 */
+	public function get_blocklist_entries() {
+		$response = $this->make_request( 'blocklist/list' );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		return new EntryList( $response );
+	}
+
+	/**
+	 * Create a blocklist entry
+	 *
+	 * @param string      $value      Value to blocklist
+	 * @param string      $type       Type of API (proxy, url, email, phone, mobiletracker, devicetracker)
+	 * @param string      $value_type Type of value (ip, cidr, email, etc.)
+	 * @param string|null $reason     Optional reason for blocklisting
+	 *
+	 * @return EntryList|WP_Error
+	 */
+	public function create_blocklist_entry( string $value, string $type, string $value_type, ?string $reason = null ) {
+		$validation = $this->validate_list_params( $type, $value_type, 'blocklist' );
+		if ( is_wp_error( $validation ) ) {
+			return $validation;
+		}
+
+		// Validate value format based on value_type
+		if ( ! $this->validate_list_value( $value, $value_type ) ) {
+			return new WP_Error(
+				'invalid_value',
+				sprintf( __( 'Invalid format for value type: %s', 'arraypress' ), $value_type )
+			);
+		}
+
+		$params = [
+			'value'      => $value,
+			'type'       => $type,
+			'value_type' => $value_type
+		];
+
+		if ( $reason !== null ) {
+			$params['reason'] = $reason;
+		}
+
+		$response = $this->make_request( 'blocklist/create', $params );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		return new EntryList( $response );
+	}
+
+	/**
+	 * Delete a blocklist entry
+	 *
+	 * @param string $value      Value to remove
+	 * @param string $type       Type of API
+	 * @param string $value_type Type of value
+	 *
+	 * @return EntryList|WP_Error
+	 */
+	public function delete_blocklist_entry( string $value, string $type, string $value_type ) {
+		$validation = $this->validate_list_params( $type, $value_type, 'blocklist' );
+		if ( is_wp_error( $validation ) ) {
+			return $validation;
+		}
+
+		$params = [
+			'value'      => $value,
+			'type'       => $type,
+			'value_type' => $value_type
+		];
+
+		$response = $this->make_request( 'blocklist/delete', $params );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		return new EntryList( $response );
+	}
+
+	/** List Validation *******************************************************/
+
+	/**
+	 * Validates value format based on value_type
 	 *
 	 * @param string $value      Value to validate
 	 * @param string $value_type Type of value
 	 *
 	 * @return bool
 	 */
-	private function validate_allowlist_value( string $value, string $value_type ): bool {
+	private function validate_list_value( string $value, string $value_type ): bool {
 		switch ( $value_type ) {
 			case 'ip':
 				return filter_var( $value, FILTER_VALIDATE_IP ) !== false;
@@ -1076,135 +1293,41 @@ class Client {
 	}
 
 	/**
-	 * Create a blocklist entry
+	 * Validates type and value_type parameters for list operations
 	 *
-	 * @param string      $value      Value to blocklist
-	 * @param string      $type       Type of API (proxy, url, email, phone, mobiletracker, devicetracker)
-	 * @param string      $value_type Type of value (ip, cidr, email, etc.)
-	 * @param string|null $reason     Optional reason for blocklisting
+	 * @param string $type       List type (proxy, url, email, etc.)
+	 * @param string $value_type Type of value (ip, cidr, email, etc.)
+	 * @param string $list_name  Name of list for error messages ('allowlist' or 'blocklist')
 	 *
-	 * @return EntryList|WP_Error
+	 * @return WP_Error|true True if valid, WP_Error if invalid
 	 */
-	public function create_blocklist_entry(
-		string $value,
-		string $type,
-		string $value_type,
-		?string $reason = null
-	) {
-		// Use same validation as allowlist since types are identical
-		if ( ! isset( self::ALLOWLIST_TYPES[ $type ] ) ) {
+	private function validate_list_params( string $type, string $value_type, string $list_name ) {
+		if ( ! isset( self::ENTRYLIST_TYPES[ $type ] ) ) {
 			return new WP_Error(
 				'invalid_type',
 				sprintf(
-					__( 'Invalid blocklist type. Must be one of: %s', 'arraypress' ),
-					implode( ', ', array_keys( self::ALLOWLIST_TYPES ) )
+					__( 'Invalid %s type. Must be one of: %s', 'arraypress' ),
+					$list_name,
+					implode( ', ', array_keys( self::ENTRYLIST_TYPES ) )
 				)
 			);
 		}
 
-		if ( $type !== 'custom' && ! in_array( $value_type, self::ALLOWLIST_TYPES[ $type ] ) ) {
+		if ( $type !== 'custom' && ! in_array( $value_type, self::ENTRYLIST_TYPES[ $type ] ) ) {
 			return new WP_Error(
 				'invalid_value_type',
 				sprintf(
 					__( 'Invalid value type for %s. Must be one of: %s', 'arraypress' ),
 					$type,
-					implode( ', ', self::ALLOWLIST_TYPES[ $type ] )
+					implode( ', ', self::ENTRYLIST_TYPES[ $type ] )
 				)
 			);
 		}
 
-		// Validate value format based on value_type
-		if ( ! $this->validate_allowlist_value( $value, $value_type ) ) {
-			return new WP_Error(
-				'invalid_value',
-				sprintf( __( 'Invalid format for value type: %s', 'arraypress' ), $value_type )
-			);
-		}
-
-		$params = [
-			'value'      => $value,
-			'type'       => $type,
-			'value_type' => $value_type
-		];
-
-		if ( $reason !== null ) {
-			$params['reason'] = $reason;
-		}
-
-		$response = $this->make_request( 'blocklist/create', $params );
-
-		if ( is_wp_error( $response ) ) {
-			return $response;
-		}
-
-		return new EntryList( $response );
+		return true;
 	}
 
-	/**
-	 * Get list of blocklist entries
-	 *
-	 * @return EntryList|WP_Error
-	 */
-	public function get_blocklist_entries() {
-		$response = $this->make_request( 'blocklist/list' );
-
-		if ( is_wp_error( $response ) ) {
-			return $response;
-		}
-
-		return new EntryList( $response );
-	}
-
-	/**
-	 * Delete a blocklist entry
-	 *
-	 * @param string $value      Value to remove
-	 * @param string $type       Type of API
-	 * @param string $value_type Type of value
-	 *
-	 * @return EntryList|WP_Error
-	 */
-	public function delete_blocklist_entry(
-		string $value,
-		string $type,
-		string $value_type
-	) {
-		// Validate type and value_type same as create
-		if ( ! isset( self::ALLOWLIST_TYPES[ $type ] ) ) {
-			return new WP_Error(
-				'invalid_type',
-				sprintf(
-					__( 'Invalid blocklist type. Must be one of: %s', 'arraypress' ),
-					implode( ', ', array_keys( self::ALLOWLIST_TYPES ) )
-				)
-			);
-		}
-
-		if ( $type !== 'custom' && ! in_array( $value_type, self::ALLOWLIST_TYPES[ $type ] ) ) {
-			return new WP_Error(
-				'invalid_value_type',
-				sprintf(
-					__( 'Invalid value type for %s. Must be one of: %s', 'arraypress' ),
-					$type,
-					implode( ', ', self::ALLOWLIST_TYPES[ $type ] )
-				)
-			);
-		}
-
-		$params = [
-			'value'      => $value,
-			'type'       => $type,
-			'value_type' => $value_type
-		];
-
-		$response = $this->make_request( 'blocklist/delete', $params );
-
-		if ( is_wp_error( $response ) ) {
-			return $response;
-		}
-
-		return new EntryList( $response );
-	}
+	/** Cache Helpers *********************************************************/
 
 	/**
 	 * Generate cache key
