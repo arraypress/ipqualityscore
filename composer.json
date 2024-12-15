@@ -1,5 +1,6 @@
 {
   "name": "arraypress/ipqualityscore",
+  "version": "1.0.0",
   "description": "A PHP library for integrating with the IPQualityScore API in WordPress, providing proxy, VPN & email validation, phone verification, dark web monitoring, URL scanning, and fraud prevention. Features comprehensive response handling and WordPress transient caching.",
   "type": "library",
   "license": "GPL-2.0-or-later",
@@ -11,7 +12,7 @@
     }
   ],
   "require": {
-    "php": "^7.4 || ^8.0"
+    "php": ">=7.4"
   },
   "autoload": {
     "psr-4": {
